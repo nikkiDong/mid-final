@@ -1,35 +1,47 @@
 [
   {
-    "id": "appt-001",
+    "appointment_id": "appt-001",
+    "clinic_id": "ClearVision-01",
     "patient_name": "James Lee",
     "patient_email": "james@email.com",
     "doctor_id": "doc_01",
     "doctor_name": "Dr. Sarah Chen",
-    "datetime": "2025-08-01T09:00",
-    "exam_type": "Retinal Exam",
+    "appointment_date": "2025-08-01",
+    "appointment_time": "09:00",
+    "submitted_timestamp": "2025-07-15T10:00:00",
+    "appointment_type": "Retinal Exam",
+    "symptom_summary": "Blurry vision on the left side for two weeks",
     "status": "Scheduled",
-    "symptom_notes": "Blurry vision on the left side for two weeks"
+    "doctor_note": ""
   },
   {
-    "id": "appt-002",
+    "appointment_id": "appt-002",
+    "clinic_id": "ClearVision-01",
     "patient_name": "Maria Gomez",
     "patient_email": "maria@email.com",
     "doctor_id": "doc_02",
     "doctor_name": "Dr. James Park",
-    "datetime": "2025-08-01T11:00",
-    "exam_type": "Glaucoma Screening",
+    "appointment_date": "2025-08-01",
+    "appointment_time": "11:00",
+    "submitted_timestamp": "2025-07-16T14:30:00",
+    "appointment_type": "Glaucoma Screening",
+    "symptom_summary": "Eye pain and seeing floaters occasionally",
     "status": "Scheduled",
-    "symptom_notes": "Eye pain and seeing floaters occasionally"
+    "doctor_note": ""
   },
   {
-    "id": "appt-003",
+    "appointment_id": "appt-003",
+    "clinic_id": "ClearVision-01",
     "patient_name": "David Kim",
     "patient_email": "david@email.com",
     "doctor_id": "doc_03",
     "doctor_name": "Dr. Emily Torres",
-    "datetime": "2025-08-01T14:00",
-    "exam_type": "Routine Vision Check",
+    "appointment_date": "2025-08-01",
+    "appointment_time": "14:00",
+    "submitted_timestamp": "2025-07-17T09:00:00",
+    "appointment_type": "Routine Vision Check",
+    "symptom_summary": "Annual checkup, no specific complaints",
     "status": "Completed",
-    "symptom_notes": "Annual checkup, no specific complaints"
+    "doctor_note": "Passed all standard vision tests. Follow up in 12 months."
   }
 ]
