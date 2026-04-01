@@ -1,0 +1,35 @@
+[
+  {
+    "id": "appt-001",
+    "patient_name": "James Lee",
+    "patient_email": "james@email.com",
+    "doctor_id": "doc_01",
+    "doctor_name": "Dr. Sarah Chen",
+    "datetime": "2025-08-01T09:00",
+    "exam_type": "Retinal Exam",
+    "status": "Scheduled",
+    "symptom_notes": "Blurry vision on the left side for two weeks"
+  },
+  {
+    "id": "appt-002",
+    "patient_name": "Maria Gomez",
+    "patient_email": "maria@email.com",
+    "doctor_id": "doc_02",
+    "doctor_name": "Dr. James Park",
+    "datetime": "2025-08-01T11:00",
+    "exam_type": "Glaucoma Screening",
+    "status": "Scheduled",
+    "symptom_notes": "Eye pain and seeing floaters occasionally"
+  },
+  {
+    "id": "appt-003",
+    "patient_name": "David Kim",
+    "patient_email": "david@email.com",
+    "doctor_id": "doc_03",
+    "doctor_name": "Dr. Emily Torres",
+    "datetime": "2025-08-01T14:00",
+    "exam_type": "Routine Vision Check",
+    "status": "Completed",
+    "symptom_notes": "Annual checkup, no specific complaints"
+  }
+]
