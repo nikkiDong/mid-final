@@ -1,0 +1,26 @@
+[
+  {
+    "patient_id": "pat_01",
+    "name": "James Lee",
+    "email": "james@email.com",
+    "password": "patient123"
+  },
+  {
+    "patient_id": "pat_02",
+    "name": "Maria Gomez",
+    "email": "maria@email.com",
+    "password": "patient123"
+  },
+  {
+    "patient_id": "pat_03",
+    "name": "David Kim",
+    "email": "david@email.com",
+    "password": "patient123"
+  },
+  {
+    "patient_id": "pat_3bf71ba8",
+    "name": "Yimeng Dong",
+    "email": "dongyi@udel.edu",
+    "password": "DongYiMeng2005"
+  }
+]
