@@ -1,0 +1,39 @@
+[
+  {
+    "doctor_id": "doc_01",
+    "name": "Dr. Sarah Chen",
+    "specialty": "Retinal Disease",
+    "available_slots": [
+      "2026-05-01T09:00",
+      "2026-05-01T10:30"
+    ]
+  },
+  {
+    "doctor_id": "doc_02",
+    "name": "Dr. James Park",
+    "specialty": "Glaucoma",
+    "available_slots": [
+      "2026-05-01T11:00",
+      "2026-05-02T09:00"
+    ]
+  },
+  {
+    "doctor_id": "doc_03",
+    "name": "Dr. Emily Torres",
+    "specialty": "General Ophthalmology",
+    "available_slots": [
+      "2026-05-01T14:00",
+      "2026-05-02T10:30"
+    ]
+  },
+  {
+    "doctor_id": "doc_6d02db73",
+    "name": "Yimeng Dong",
+    "email": "dongyi@udel.edu",
+    "specialty": "Vision",
+    "password": "eaa30ee598bfc56244c128b75aab299cec131472967cfeb6fffc64edc5c60beb",
+    "available_slots": [
+      "2026-04-03T08:00"
+    ]
+  }
+]
