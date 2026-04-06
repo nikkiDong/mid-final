@@ -1,6 +1,7 @@
 import streamlit as st
 import json
 import hashlib
+import re
 from pathlib import Path
 from datetime import datetime
 import uuid
@@ -56,6 +57,34 @@ def inject_custom_css():
         font-size: 0.9rem;
     }
 
+    /* Styled table */
+    .styled-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-bottom: 1rem;
+    }
+    .styled-table thead th {
+        background-color: #1f77b4;
+        color: white;
+        padding: 0.75rem;
+        text-align: left;
+        font-weight: 600;
+        border-radius: 0.25rem 0.25rem 0 0;
+    }
+    .styled-table tbody tr:nth-child(even) {
+        background-color: #f8f9fa;
+    }
+    .styled-table tbody tr:nth-child(odd) {
+        background-color: #ffffff;
+    }
+    .styled-table tbody td {
+        padding: 0.75rem;
+        border-bottom: 1px solid #dee2e6;
+    }
+    .styled-table tbody tr:hover {
+        background-color: #f1f5f9;
+    }
+
     /* Slot card */
     .slot-card {
         background-color: #f8f9fa;
@@ -85,11 +114,19 @@ def inject_custom_css():
     }
 
     /* Tighter spacing for containers and forms */
-    .stContainer > div { padding-top: 0.25rem; }
     div[data-testid="stMetric"] { padding: 0.5rem 0; }
 
     /* Consistent subheader styling */
     .stTabs [data-baseweb="tab-panel"] { padding-top: 1rem; }
+
+    /* Better button grouping spacing */
+    .stButton > button { margin-top: 0.25rem; }
+    div[data-testid="stForm"] { padding: 1rem; }
+
+    /* Password strength indicator */
+    .pwd-strength-weak { color: #dc3545; font-size: 0.85rem; }
+    .pwd-strength-ok { color: #ffc107; font-size: 0.85rem; }
+    .pwd-strength-good { color: #28a745; font-size: 0.85rem; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -133,253 +170,341 @@ PATH_PATIENTS     = Path("patients.json")
 PATH_DOCTORS      = Path("doctors.json")
 PATH_APPOINTMENTS = Path("appointments.json")
 
-# ─── PERSISTENCE ───────────────────────────────────────────────────────────────
-def hash_password(password: str) -> str:
-    return hashlib.sha256(password.encode()).hexdigest()
+# ─── DATA STORE CLASS ──────────────────────────────────────────────────────────
+class DataStore:
+    """Centralized persistence layer for JSON files."""
 
-def load_json(path, default):
-    if path.exists():
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                # Validate data structure with defaults
-                if isinstance(data, list):
-                    return data
-                elif isinstance(data, dict):
-                    return data
-                else:
-                    st.warning(f"Invalid data format in {path.name}, using default.")
-                    return default
-        except (OSError, json.JSONDecodeError) as e:
-            st.warning(f"Could not load {path.name}: {e}")
-            return default
-    else:
-        try:
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(default, f, indent=2)
-        except OSError as e:
-            st.error(f"Failed to initialize {path.name}: {e}")
-        return default
+    @staticmethod
+    def hash_password(password: str) -> str:
+        return hashlib.sha256(password.encode()).hexdigest()
 
-def save_json(path, data):
-    """Atomic write: write to .tmp then rename to avoid partial-write corruption."""
-    tmp = path.with_suffix(".tmp")
-    try:
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-        tmp.replace(path)
-        return True
-    except OSError as e:
-        st.error(f"Failed to save {path.name}: {e}")
-        try:
-            tmp.unlink(missing_ok=True)
-        except OSError:
-            pass
-        return False
-
-def transactional_save(*file_pairs):
-    """
-    Transactional save for one or more files.
-    Accepts pairs of (path, data): transactional_save((path1, data1), (path2, data2), ...)
-    Backs up originals, writes all, and rolls back everything on any failure.
-    Returns (success: bool, message: str).
-    """
-    backups = []  # list of (path, original_data_or_None)
-
-    try:
-        # Phase 1: read backups
-        for path, _ in file_pairs:
-            if path.exists():
+    @staticmethod
+    def load_json(path, default):
+        """Load JSON file with validation."""
+        if path.exists():
+            try:
                 with open(path, "r", encoding="utf-8") as f:
-                    backups.append((path, json.load(f)))
-            else:
-                backups.append((path, None))
+                    data = json.load(f)
+                    if type(data) is type(default):
+                        return data
+                    else:
+                        st.warning(
+                            f"⚠️  Data in **{path.name}** has an unexpected format. "
+                            f"Using defaults. You may want to check or delete the file to reset."
+                        )
+                        return default
+            except json.JSONDecodeError as e:
+                st.error(
+                    f"⚠️  **{path.name}** contains malformed JSON (parse error: {e}). "
+                    f"Using defaults. Please fix or delete the file to restore normal operation."
+                )
+                return default
+            except OSError as e:
+                st.error(
+                    f"⚠️  Could not read **{path.name}**: {e}. "
+                    f"Check file permissions and try again."
+                )
+                return default
+        else:
+            try:
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump(default, f, indent=2)
+            except OSError as e:
+                st.error(
+                    f"⚠️  Could not create **{path.name}**: {e}. "
+                    f"Check that the directory is writable."
+                )
+            return default
 
-        # Phase 2: write all to .tmp files
-        tmp_files = []
-        for path, data in file_pairs:
-            tmp = path.with_suffix(".tmp")
+    @staticmethod
+    def save_json(path, data):
+        """Atomic write: write to .tmp then rename to avoid partial-write corruption."""
+        tmp = path.with_suffix(".tmp")
+        try:
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
-            tmp_files.append((tmp, path))
-
-        # Phase 3: atomic rename all
-        for tmp, target in tmp_files:
-            tmp.replace(target)
-
-        return True, "Changes saved successfully."
-    except OSError as e:
-        # Rollback: restore all backups
-        for path, original in backups:
-            if original is not None:
-                try:
-                    with open(path, "w", encoding="utf-8") as f:
-                        json.dump(original, f, indent=2)
-                except OSError:
-                    pass
-        # Clean up any leftover .tmp files
-        for path, _ in file_pairs:
+            tmp.replace(path)
+            return True
+        except OSError as e:
+            st.error(
+                f"⚠️  Could not save **{path.name}**: {e}. "
+                f"Your changes were not persisted — please try again. "
+                f"If this persists, check disk space and file permissions."
+            )
             try:
-                path.with_suffix(".tmp").unlink(missing_ok=True)
+                tmp.unlink(missing_ok=True)
             except OSError:
                 pass
-        return False, f"Save failed: {e}. All changes rolled back."
+            return False
 
-# ─── DATA ACCESS ───────────────────────────────────────────────────────────────
-def get_doctor_by_id(doctors_list, doctor_id):
-    return next((d for d in doctors_list if d.get("doctor_id") == doctor_id), None)
+    @staticmethod
+    def reload_json(path, default):
+        """Reload a JSON file from disk (no side effects). Used before writes to get fresh data."""
+        if path.exists():
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except (OSError, json.JSONDecodeError):
+                return default
+        return default
 
-def get_appointment_by_id(appointments, appt_id):
-    return next((a for a in appointments if a.get("appointment_id") == appt_id), None)
+    @staticmethod
+    def transactional_save(*file_pairs):
+        """
+        Transactional save for one or more files.
+        Accepts pairs of (path, data): transactional_save((path1, data1), (path2, data2), ...)
+        Backs up originals, writes all, and rolls back everything on any failure.
+        Returns (success: bool, message: str).
+        """
+        backups = []
 
-def get_patient_appointments(appointments, patient_email):
-    email = patient_email.strip().lower()
-    return [a for a in appointments if a.get("patient_email", "").strip().lower() == email]
+        try:
+            # Phase 1: read backups
+            for path, _ in file_pairs:
+                if path.exists():
+                    with open(path, "r", encoding="utf-8") as f:
+                        backups.append((path, json.load(f)))
+                else:
+                    backups.append((path, None))
 
-def get_doctor_appointments(appointments, doctor_id):
-    return [a for a in appointments if a.get("doctor_id") == doctor_id]
+            # Phase 2: write all to .tmp files
+            tmp_files = []
+            for path, data in file_pairs:
+                tmp = path.with_suffix(".tmp")
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=2)
+                tmp_files.append((tmp, path))
 
-def get_scheduled_appointments(appointments, patient_email):
-    return [a for a in get_patient_appointments(appointments, patient_email)
-            if a.get("status") == "Scheduled"]
+            # Phase 3: atomic rename all
+            for tmp, target in tmp_files:
+                tmp.replace(target)
 
-# ─── BUSINESS LOGIC ────────────────────────────────────────────────────────────
-def build_appointment(patient_name, patient_email, doctor, slot, appt_type, symptoms):
-    slot_date, slot_time = slot.split("T")
-    return {
-        "appointment_id":      f"appt-{str(uuid.uuid4())[:8]}",
-        "clinic_id":           CLINIC_ID,
-        "patient_name":        patient_name,
-        "patient_email":       patient_email,
-        "doctor_id":           doctor.get("doctor_id", ""),
-        "doctor_name":         doctor.get("name", ""),
-        "appointment_date":    slot_date,
-        "appointment_time":    slot_time,
-        "submitted_timestamp": datetime.now().isoformat(),
-        "appointment_type":    appt_type,
-        "symptom_summary":     symptoms,
-        "status":              "Scheduled",
-        "doctor_note":         "",
-    }
+            return True, "Changes saved successfully."
+        except OSError as e:
+            # Rollback: restore all backups
+            for path, original in backups:
+                if original is not None:
+                    try:
+                        with open(path, "w", encoding="utf-8") as f:
+                            json.dump(original, f, indent=2)
+                    except OSError:
+                        pass
+            # Clean up any leftover .tmp files
+            for path, _ in file_pairs:
+                try:
+                    path.with_suffix(".tmp").unlink(missing_ok=True)
+                except OSError:
+                    pass
+            return False, f"Save failed: {e}. All changes rolled back."
 
-def remove_slot_from_doctor(doctors_list, doctor_id, slot):
-    for doc in doctors_list:
-        if doc.get("doctor_id") == doctor_id and slot in doc.get("available_slots", []):
-            doc["available_slots"].remove(slot)
-            break
+# ─── VALIDATORS CLASS ──────────────────────────────────────────────────────────
+class Validators:
+    """Centralized validation logic."""
 
-def add_slot_to_doctor(doctors_list, doctor_id, slot):
-    for doc in doctors_list:
-        if doc.get("doctor_id") == doctor_id and slot not in doc.get("available_slots", []):
-            doc["available_slots"].append(slot)
-            break
+    @staticmethod
+    def email_valid(email):
+        """Validate email with stronger checks."""
+        email = email.strip()
+        if not email:
+            return False
+        pattern = r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$'
+        return bool(re.match(pattern, email))
 
-def reschedule_appointment(appointments, appt_id, new_date, new_time):
-    for appt in appointments:
-        if appt.get("appointment_id") == appt_id:
-            appt["appointment_date"] = new_date
-            appt["appointment_time"] = new_time
-            break
+    @staticmethod
+    def password_strength(password):
+        """Check password strength. Returns 'weak', 'ok', or 'good'."""
+        if len(password) < 6:
+            return 'weak'
+        has_upper = bool(re.search(r'[A-Z]', password))
+        has_digit = bool(re.search(r'\d', password))
+        if has_upper and has_digit:
+            return 'good'
+        return 'ok'
 
-def cancel_appointment(appointments, appt_id):
-    for appt in appointments:
-        if appt.get("appointment_id") == appt_id:
-            appt["status"] = "Cancelled"
-            break
+    @staticmethod
+    def validate_patient_registration(name, email, password, confirm, existing_patients):
+        """Validate patient registration form."""
+        errors = []
+        if not name.strip():
+            errors.append("Full Name is required.")
+        normalized_email = email.strip().lower()
+        if not Validators.email_valid(email):
+            errors.append("Please enter a valid email address (e.g., name@example.com).")
+        elif any(p.get("email", "").strip().lower() == normalized_email for p in existing_patients):
+            errors.append("An account with this email already exists. Please log in instead.")
+        if not password.strip():
+            errors.append("Password is required.")
+        elif len(password) < 6:
+            errors.append("Password must be at least 6 characters.")
+        if password != confirm:
+            errors.append("Passwords do not match.")
+        return errors
 
-def update_appointment_status(appointments, appt_id, status, note):
-    for appt in appointments:
-        if appt.get("appointment_id") == appt_id:
-            appt["status"]      = status
-            appt["doctor_note"] = note
-            break
+    @staticmethod
+    def validate_doctor_registration(name, email, specialty, password, confirm, existing_doctors):
+        """Validate doctor registration form."""
+        errors = []
+        if not name.strip():
+            errors.append("Full Name is required.")
+        normalized_email = email.strip().lower()
+        if not Validators.email_valid(email):
+            errors.append("Please enter a valid email address (e.g., name@example.com).")
+        elif any(d.get("email", "").strip().lower() == normalized_email for d in existing_doctors):
+            errors.append("An account with this email already exists. Please log in instead.")
+        if not specialty.strip():
+            errors.append("Specialty is required.")
+        if not password.strip():
+            errors.append("Password is required.")
+        elif len(password) < 6:
+            errors.append("Password must be at least 6 characters.")
+        if password != confirm:
+            errors.append("Passwords do not match.")
+        return errors
 
-# ─── VALIDATION ────────────────────────────────────────────────────────────────
-def _email_valid(email):
-    """Validate email with stronger checks."""
-    import re
-    email = email.strip()
-    if not email:
-        return False
-    # RFC-lite: user@domain.tld, no spaces, at least one dot in domain
-    pattern = r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$'
-    return bool(re.match(pattern, email))
+    @staticmethod
+    def validate_booking(doctor, appt_type, symptoms, slot):
+        """Validate appointment booking form."""
+        errors = []
+        if not doctor:
+            errors.append("Please select a doctor.")
+        if appt_type == "— Select appointment type —":
+            errors.append("Appointment Type is required.")
+        if not symptoms.strip():
+            errors.append("Symptom summary is required.")
+        elif len(symptoms.strip()) < 10:
+            errors.append("Symptom summary is too short — please provide more detail.")
+        if not slot:
+            if doctor:
+                errors.append("No available time slots. Please ask your doctor to add time slots.")
+            else:
+                errors.append("No available time slot to book.")
+        return errors
 
-def validate_patient_registration(name, email, password, confirm, existing_patients):
-    errors = []
-    if not name.strip():
-        errors.append("Full Name is required.")
-    if not _email_valid(email):
-        errors.append("Please enter a valid email address.")
-    elif any(p.get("email", "").strip().lower() == email.strip().lower() for p in existing_patients):
-        errors.append("An account with this email already exists.")
-    if not password.strip():
-        errors.append("Password is required.")
-    elif len(password) < 6:
-        errors.append("Password must be at least 6 characters.")
-    if password != confirm:
-        errors.append("Passwords do not match.")
-    return errors
+# ─── APPOINTMENT SERVICE CLASS ──────────────────────────────────────────────────
+class AppointmentService:
+    """Business logic for appointments and slots."""
 
-def validate_doctor_registration(name, email, specialty, password, confirm, existing_doctors):
-    errors = []
-    if not name.strip():
-        errors.append("Full Name is required.")
-    if not _email_valid(email):
-        errors.append("Please enter a valid email address.")
-    elif any(d.get("email", "").strip().lower() == email.strip().lower() for d in existing_doctors):
-        errors.append("An account with this email already exists.")
-    if not specialty.strip():
-        errors.append("Specialty is required.")
-    if not password.strip():
-        errors.append("Password is required.")
-    elif len(password) < 6:
-        errors.append("Password must be at least 6 characters.")
-    if password != confirm:
-        errors.append("Passwords do not match.")
-    return errors
+    @staticmethod
+    def build_appointment(patient_name, patient_email, doctor, slot, appt_type, symptoms):
+        """Create appointment object."""
+        slot_date, slot_time = slot.split("T")
+        return {
+            "appointment_id":      f"appt-{str(uuid.uuid4())[:8]}",
+            "clinic_id":           CLINIC_ID,
+            "patient_name":        patient_name,
+            "patient_email":       patient_email,
+            "doctor_id":           doctor.get("doctor_id", ""),
+            "doctor_name":         doctor.get("name", ""),
+            "appointment_date":    slot_date,
+            "appointment_time":    slot_time,
+            "submitted_timestamp": datetime.now().isoformat(),
+            "appointment_type":    appt_type,
+            "symptom_summary":     symptoms,
+            "status":              "Scheduled",
+            "doctor_note":         "",
+        }
 
-def validate_booking(doctor, appt_type, symptoms, slot):
-    errors = []
-    if not doctor:
-        errors.append("Please select a doctor.")
-    if appt_type == "— Select appointment type —":
-        errors.append("Appointment Type is required.")
-    if not symptoms.strip():
-        errors.append("Symptom summary is required.")
-    elif len(symptoms.strip()) < 10:
-        errors.append("Symptom summary is too short — please provide more detail.")
-    if not slot:
-        if doctor:
-            errors.append("No available time slots. Please ask your doctor to add time slots.")
-        else:
-            errors.append("No available time slot to book.")
-    return errors
+    @staticmethod
+    def remove_slot_from_doctor(doctors_list, doctor_id, slot):
+        """Remove a time slot from doctor's availability."""
+        for doc in doctors_list:
+            if doc.get("doctor_id") == doctor_id and slot in doc.get("available_slots", []):
+                doc["available_slots"].remove(slot)
+                break
 
-# ─── RECORD CREATION ───────────────────────────────────────────────────────────
-def create_patient_record(name, email, password):
-    return {
-        "patient_id": f"pat_{str(uuid.uuid4())[:8]}",
-        "name":       name.strip(),
-        "email":      email.strip().lower(),
-        "password":   hash_password(password),
-    }
+    @staticmethod
+    def add_slot_to_doctor(doctors_list, doctor_id, slot):
+        """Add a time slot to doctor's availability."""
+        for doc in doctors_list:
+            if doc.get("doctor_id") == doctor_id and slot not in doc.get("available_slots", []):
+                doc["available_slots"].append(slot)
+                break
 
-def create_doctor_record(name, email, specialty, password):
-    return {
-        "doctor_id":       f"doc_{str(uuid.uuid4())[:8]}",
-        "name":            name.strip(),
-        "email":           email.strip().lower(),
-        "specialty":       specialty.strip(),
-        "password":        hash_password(password),
-        "available_slots": [],
-    }
+    @staticmethod
+    def reschedule_appointment(appointments, appt_id, new_date, new_time):
+        """Reschedule an appointment to new date/time."""
+        for appt in appointments:
+            if appt.get("appointment_id") == appt_id:
+                appt["appointment_date"] = new_date
+                appt["appointment_time"] = new_time
+                break
+
+    @staticmethod
+    def cancel_appointment(appointments, appt_id):
+        """Mark appointment as cancelled."""
+        for appt in appointments:
+            if appt.get("appointment_id") == appt_id:
+                appt["status"] = "Cancelled"
+                break
+
+    @staticmethod
+    def update_appointment_status(appointments, appt_id, status, note):
+        """Update appointment status and doctor note."""
+        for appt in appointments:
+            if appt.get("appointment_id") == appt_id:
+                appt["status"]      = status
+                appt["doctor_note"] = note
+                break
+
+    @staticmethod
+    def get_doctor_by_id(doctors_list, doctor_id):
+        """Retrieve doctor by ID."""
+        return next((d for d in doctors_list if d.get("doctor_id") == doctor_id), None)
+
+    @staticmethod
+    def get_appointment_by_id(appointments, appt_id):
+        """Retrieve appointment by ID."""
+        return next((a for a in appointments if a.get("appointment_id") == appt_id), None)
+
+    @staticmethod
+    def get_patient_appointments(appointments, patient_email):
+        """Get all appointments for a patient."""
+        email = patient_email.strip().lower()
+        return [a for a in appointments if a.get("patient_email", "").strip().lower() == email]
+
+    @staticmethod
+    def get_doctor_appointments(appointments, doctor_id):
+        """Get all appointments for a doctor."""
+        return [a for a in appointments if a.get("doctor_id") == doctor_id]
+
+    @staticmethod
+    def get_scheduled_appointments(appointments, patient_email):
+        """Get only scheduled appointments for a patient."""
+        return [a for a in AppointmentService.get_patient_appointments(appointments, patient_email)
+                if a.get("status") == "Scheduled"]
+
+# ─── RECORD CREATION CLASS ─────────────────────────────────────────────────────
+class RecordFactory:
+    """Create new patient and doctor records."""
+
+    @staticmethod
+    def create_patient_record(name, email, password):
+        """Create new patient record."""
+        return {
+            "patient_id": f"pat_{str(uuid.uuid4())[:8]}",
+            "name":       name.strip(),
+            "email":      email.strip().lower(),
+            "password":   DataStore.hash_password(password),
+        }
+
+    @staticmethod
+    def create_doctor_record(name, email, specialty, password):
+        """Create new doctor record."""
+        return {
+            "doctor_id":       f"doc_{str(uuid.uuid4())[:8]}",
+            "name":            name.strip(),
+            "email":           email.strip().lower(),
+            "specialty":       specialty.strip(),
+            "password":        DataStore.hash_password(password),
+            "available_slots": [],
+        }
 
 # ─── AI ASSISTANT ──────────────────────────────────────────────────────────────
 def get_ai_response(user_input, appointments, doctors, patient_email):
+    """Generate AI assistant response."""
     q = user_input.lower()
     if "next appointment" in q:
-        scheduled = get_scheduled_appointments(appointments, patient_email)
+        scheduled = AppointmentService.get_scheduled_appointments(appointments, patient_email)
         if scheduled:
             nxt = sorted(scheduled, key=lambda x: x.get("appointment_date", ""))[0]
             return (f"Your next appointment is on {format_appointment_date(nxt.get('appointment_date', ''))} at "
@@ -422,61 +547,128 @@ def reset_session():
         "current_user_email": None,
         "current_doctor_id": None,
         "page": "login",
-        "selected_appointment_id": None,
+        "patient_selected_appt_id": None,
+        "doctor_selected_appt_id": None,
         "messages": [
             {"role": "assistant", "content": "Hi! I am the ClearVision Clinic assistant. How can I help you today?"}
         ],
-        "_reg_success": None,
+        "_flash_message": None,
+        "_flash_type": None,
     })
 
-# ─── UI COMPONENTS ─────────────────────────────────────────────────────────────
+def set_flash(message, msg_type="success"):
+    """Set a one-shot flash message that survives exactly one rerun."""
+    st.session_state["_flash_message"] = message
+    st.session_state["_flash_type"] = msg_type
+
+def show_flash():
+    """Display and clear any pending flash message."""
+    msg = st.session_state.get("_flash_message")
+    if msg:
+        msg_type = st.session_state.get("_flash_type", "success")
+        if msg_type == "success":
+            st.success(msg)
+        elif msg_type == "error":
+            st.error(msg)
+        elif msg_type == "warning":
+            st.warning(msg)
+        else:
+            st.info(msg)
+        st.session_state["_flash_message"] = None
+        st.session_state["_flash_type"] = None
+
+def require_role(expected_role):
+    """Role-based authorization check. Returns True if authorized, False otherwise."""
+    if st.session_state.get("role") != expected_role:
+        reset_session()
+        navigate_to("login")
+        return False
+    return True
+
+# ─── UI HELPERS CLASS ──────────────────────────────────────────────────────────
+class UIHelpers:
+    """Shared UI components and styling."""
+
+    @staticmethod
+    def show_validation_errors(errors):
+        """Display validation errors."""
+        for err in errors:
+            st.warning(f"⚠️  {err}")
+
+    @staticmethod
+    def render_styled_table(appointments):
+        """Render appointments as a styled HTML table instead of st.dataframe."""
+        if not appointments:
+            st.info("No appointments to display.")
+            return
+
+        html_rows = []
+        for a in appointments:
+            status_html = get_status_badge_html(a.get("status", "Scheduled"))
+            row = f"""
+            <tr>
+                <td>{a.get("appointment_id", "")}</td>
+                <td>{a.get("patient_name", "")}</td>
+                <td>{a.get("doctor_name", "")}</td>
+                <td>{format_appointment_date(a.get("appointment_date", ""))}</td>
+                <td>{a.get("appointment_time", "")}</td>
+                <td>{a.get("appointment_type", "")}</td>
+                <td>{status_html}</td>
+            </tr>
+            """
+            html_rows.append(row)
+
+        html = f"""
+        <table class="styled-table">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Patient</th>
+                    <th>Doctor</th>
+                    <th>Date</th>
+                    <th>Time</th>
+                    <th>Type</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {"".join(html_rows)}
+            </tbody>
+        </table>
+        """
+        st.markdown(html, unsafe_allow_html=True)
+
+    @staticmethod
+    def appt_selectbox(label, appointments, key, state_key="patient_selected_appt_id"):
+        """Selectbox backed by appointment_id — immune to list reordering."""
+        label_to_id = {
+            f"{format_appointment_date(a.get('appointment_date','?'))} {a.get('appointment_time','')}  —  "
+            f"{a.get('appointment_type','?')}  —  {a.get('status','?')}": a.get("appointment_id", "")
+            for a in appointments
+        }
+        current_id    = st.session_state.get(state_key)
+        current_label = next((lbl for lbl, aid in label_to_id.items() if aid == current_id), None)
+        options       = ["— Select an appointment —"] + list(label_to_id.keys())
+        default_idx   = options.index(current_label) if current_label in options else 0
+
+        chosen = st.selectbox(label, options=options, index=default_idx, key=key)
+        st.session_state[state_key] = (
+            None if chosen == "— Select an appointment —" else label_to_id[chosen]
+        )
+
+# ─── NAVIGATION HELPER ─────────────────────────────────────────────────────────
 def navigate_to(page):
+    """Navigate to a page and optionally reset page-specific state keys."""
+    if page == "patient_dashboard":
+        st.session_state["doctor_selected_appt_id"] = None
+    elif page == "doctor_dashboard":
+        st.session_state["patient_selected_appt_id"] = None
     st.session_state["page"] = page
-    st.session_state["selected_appointment_id"] = None
     st.rerun()
-
-def show_validation_errors(errors):
-    for err in errors:
-        st.warning(f"⚠️  {err}")
-
-def render_appt_table(appointments):
-    keys = ["appointment_id", "patient_name", "appointment_date", "appointment_time",
-            "appointment_type", "status", "doctor_name"]
-    rows = [{k: a.get(k, "") for k in keys} for a in appointments]
-    st.dataframe(
-        rows,
-        column_config={
-            "appointment_id":   st.column_config.TextColumn("ID",     width="small"),
-            "patient_name":     st.column_config.TextColumn("Patient"),
-            "doctor_name":      st.column_config.TextColumn("Doctor"),
-            "appointment_date": st.column_config.TextColumn("Date",   width="medium"),
-            "appointment_time": st.column_config.TextColumn("Time",   width="small"),
-            "appointment_type": st.column_config.TextColumn("Type"),
-            "status":           st.column_config.TextColumn("Status", width="small"),
-        },
-        hide_index=True,
-        use_container_width=True,
-    )
-
-def appt_selectbox(label, appointments, key):
-    """Selectbox backed by appointment_id — immune to list reordering."""
-    label_to_id = {
-        f"{format_appointment_date(a.get('appointment_date','?'))} {a.get('appointment_time','')}  —  "
-        f"{a.get('appointment_type','?')}  —  {a.get('status','?')}": a.get("appointment_id", "")
-        for a in appointments
-    }
-    current_id    = st.session_state.get("selected_appointment_id")
-    current_label = next((lbl for lbl, aid in label_to_id.items() if aid == current_id), None)
-    options       = ["— Select an appointment —"] + list(label_to_id.keys())
-    default_idx   = options.index(current_label) if current_label in options else 0
-
-    chosen = st.selectbox(label, options=options, index=default_idx, key=key)
-    st.session_state["selected_appointment_id"] = (
-        None if chosen == "— Select an appointment —" else label_to_id[chosen]
-    )
 
 # ─── PAGE RENDERERS ────────────────────────────────────────────────────────────
 def render_sidebar():
+    """Render the sidebar with navigation."""
     with st.sidebar:
         st.markdown("## 👁️ ClearVision Clinic")
         st.divider()
@@ -512,15 +704,14 @@ def render_clinic_footer():
 
 # ── Login page ─────────────────────────────────────────────────────────────────
 def render_login_page(all_patients, doctors):
+    """Render login/register page."""
     _, col, _ = st.columns([1, 2, 1])
     with col:
         st.markdown("<h1 style='text-align: center;'>👁️ ClearVision Clinic</h1>", unsafe_allow_html=True)
         st.markdown("<p style='text-align: center; color: #666;'><em>Ophthalmology Appointment Portal</em></p>", unsafe_allow_html=True)
         st.divider()
 
-        if st.session_state.get("_reg_success"):
-            st.success(st.session_state["_reg_success"])
-            st.session_state["_reg_success"] = None
+        show_flash()
 
         tab_patient, tab_doctor = st.tabs(["Patient Login", "Doctor Login"])
         with tab_patient:
@@ -541,12 +732,13 @@ def render_login_page(all_patients, doctors):
 
 
 def _render_patient_login(all_patients):
+    """Render patient login form."""
     st.subheader("Patient Login")
     email    = st.text_input("Email",    placeholder="yourname@email.com", key="login_patient_email")
     password = st.text_input("Password", type="password",                  key="login_patient_password")
 
     if st.button("Log In as Patient", key="login_patient_btn", type="primary", use_container_width=True):
-        if not _email_valid(email):
+        if not Validators.email_valid(email):
             st.warning("⚠️  Please enter a valid email address.")
         elif not password.strip():
             st.warning("⚠️  Please enter your password.")
@@ -554,7 +746,7 @@ def _render_patient_login(all_patients):
             matched = next(
                 (p for p in all_patients
                  if p.get("email", "").strip().lower() == email.strip().lower()
-                 and p.get("password") == hash_password(password)),
+                 and p.get("password") == DataStore.hash_password(password)),
                 None,
             )
             if matched:
@@ -569,36 +761,48 @@ def _render_patient_login(all_patients):
 
 
 def _render_patient_register(all_patients):
+    """Render patient registration form."""
     st.subheader("Patient Register")
     name     = st.text_input("Full Name *",        placeholder="James Lee",          key="reg_patient_name")
     email    = st.text_input("Email *",            placeholder="yourname@email.com", key="reg_patient_email")
     password = st.text_input("Password *",         type="password",                  key="reg_patient_password",
-                             help="Must be at least 6 characters.")
+                             help="Must be at least 6 characters (at least 1 uppercase + 1 digit recommended).")
     confirm  = st.text_input("Confirm Password *", type="password",                  key="reg_patient_confirm")
 
+    # Password strength indicator
+    if password:
+        strength = Validators.password_strength(password)
+        if strength == 'weak':
+            st.markdown('<span class="pwd-strength-weak">⚠️ Weak password</span>', unsafe_allow_html=True)
+        elif strength == 'ok':
+            st.markdown('<span class="pwd-strength-ok">✓ Good password</span>', unsafe_allow_html=True)
+        else:
+            st.markdown('<span class="pwd-strength-good">✓✓ Strong password</span>', unsafe_allow_html=True)
+
     if st.button("Create Account", key="reg_patient_btn", type="primary", use_container_width=True):
-        errors = validate_patient_registration(name, email, password, confirm, all_patients)
+        errors = Validators.validate_patient_registration(name, email, password, confirm, all_patients)
         if errors:
-            show_validation_errors(errors)
+            UIHelpers.show_validation_errors(errors)
         else:
             with st.spinner("Creating your account..."):
-                all_patients.append(create_patient_record(name, email, password))
-                if save_json(PATH_PATIENTS, all_patients):
-                    st.session_state["_reg_success"] = "Account created successfully! Please log in."
+                all_patients.append(RecordFactory.create_patient_record(name, email, password))
+                if DataStore.save_json(PATH_PATIENTS, all_patients):
+                    set_flash("Account created successfully! Please log in.")
                     st.session_state["patient_mode"] = "Login"
                     navigate_to("login")
                 else:
-                    all_patients.pop()  # rollback in-memory change
+                    all_patients.pop()
                     st.error("⚠️  Could not create account. Please try again.")
 
 
 def _render_doctor_login(doctors):
+    """Render doctor login form."""
     st.subheader("Doctor Login")
     email    = st.text_input("Email",    placeholder="doctor@clearvision.com", key="login_doc_email")
     password = st.text_input("Password", type="password",                      key="login_doc_password")
 
     if st.button("Log In as Doctor", key="login_doctor_btn", type="primary", use_container_width=True):
-        if not _email_valid(email):
+        if not Validators.email_valid(email):
             st.warning("⚠️  Please enter a valid email address.")
         elif not password.strip():
             st.warning("⚠️  Please enter your password.")
@@ -606,7 +810,7 @@ def _render_doctor_login(doctors):
             matched = next(
                 (d for d in doctors
                  if d.get("email", "").strip().lower() == email.strip().lower()
-                 and d.get("password") == hash_password(password)),
+                 and d.get("password") == DataStore.hash_password(password)),
                 None,
             )
             if matched:
@@ -621,39 +825,48 @@ def _render_doctor_login(doctors):
 
 
 def _render_doctor_register(doctors):
+    """Render doctor registration form."""
     st.subheader("Doctor Registration")
     name      = st.text_input("Full Name *",        placeholder="Dr. Jane Smith",         key="reg_doc_name")
     email     = st.text_input("Email *",            placeholder="doctor@clearvision.com", key="reg_doc_email")
     specialty = st.text_input("Specialty *",        placeholder="e.g. Retinal Disease",   key="reg_doc_specialty")
     password  = st.text_input("Password *",         type="password",                      key="reg_doc_password",
-                              help="Must be at least 6 characters.")
+                              help="Must be at least 6 characters (at least 1 uppercase + 1 digit recommended).")
     confirm   = st.text_input("Confirm Password *", type="password",                      key="reg_doc_confirm")
 
+    # Password strength indicator
+    if password:
+        strength = Validators.password_strength(password)
+        if strength == 'weak':
+            st.markdown('<span class="pwd-strength-weak">⚠️ Weak password</span>', unsafe_allow_html=True)
+        elif strength == 'ok':
+            st.markdown('<span class="pwd-strength-ok">✓ Good password</span>', unsafe_allow_html=True)
+        else:
+            st.markdown('<span class="pwd-strength-good">✓✓ Strong password</span>', unsafe_allow_html=True)
+
     if st.button("Create Doctor Account", key="reg_doc_btn", type="primary", use_container_width=True):
-        errors = validate_doctor_registration(name, email, specialty, password, confirm, doctors)
+        errors = Validators.validate_doctor_registration(name, email, specialty, password, confirm, doctors)
         if errors:
-            show_validation_errors(errors)
+            UIHelpers.show_validation_errors(errors)
         else:
             with st.spinner("Creating your account..."):
-                doctors.append(create_doctor_record(name, email, specialty, password))
-                if save_json(PATH_DOCTORS, doctors):
-                    st.session_state["_reg_success"] = "Doctor account created successfully! Please log in."
+                doctors.append(RecordFactory.create_doctor_record(name, email, specialty, password))
+                if DataStore.save_json(PATH_DOCTORS, doctors):
+                    set_flash("Doctor account created successfully! Please log in.")
                     st.session_state["doctor_mode"] = "Login"
                     navigate_to("login")
                 else:
-                    doctors.pop()  # rollback in-memory change
+                    doctors.pop()
                     st.error("⚠️  Could not create account. Please try again.")
 
 
 # ── Patient dashboard ──────────────────────────────────────────────────────────
 def render_patient_dashboard(all_appointments, patient_email, patient_name):
-    # Role guard — redirect without double rerun
-    if st.session_state.get("role") != "Patient":
-        reset_session()
-        navigate_to("login")
+    """Render patient dashboard."""
+    if not require_role("Patient"):
         return
 
-    my_appointments = get_patient_appointments(all_appointments, patient_email)
+    my_appointments = AppointmentService.get_patient_appointments(all_appointments, patient_email)
 
     st.title("📋 My Appointments")
     st.caption(f"Logged in as {patient_email}")
@@ -662,7 +875,7 @@ def render_patient_dashboard(all_appointments, patient_email, patient_name):
     col1, col2 = st.columns([4, 2])
     with col1:
         if my_appointments:
-            render_appt_table(my_appointments)
+            UIHelpers.render_styled_table(my_appointments)
         else:
             st.info("🗓️ You have no appointments yet. Use **Book Appointment** in the sidebar to get started.")
     with col2:
@@ -674,8 +887,9 @@ def render_patient_dashboard(all_appointments, patient_email, patient_name):
     if my_appointments:
         st.divider()
         st.markdown('<div class="section-header">📝 Appointment Details</div>', unsafe_allow_html=True)
-        appt_selectbox("Choose an appointment to inspect:", my_appointments, key="patient_appt_selector")
-        appt = get_appointment_by_id(all_appointments, st.session_state.get("selected_appointment_id"))
+        UIHelpers.appt_selectbox("Choose an appointment to inspect:", my_appointments,
+                       key="patient_appt_selector", state_key="patient_selected_appt_id")
+        appt = AppointmentService.get_appointment_by_id(all_appointments, st.session_state.get("patient_selected_appt_id"))
         if appt:
             with st.container(border=True):
                 col_a, col_b = st.columns(2)
@@ -694,10 +908,8 @@ def render_patient_dashboard(all_appointments, patient_email, patient_name):
 
 # ── Patient book page ──────────────────────────────────────────────────────────
 def render_patient_book(all_appointments, doctors, patient_name, patient_email):
-    # Role guard — redirect without double rerun
-    if st.session_state.get("role") != "Patient":
-        reset_session()
-        navigate_to("login")
+    """Render patient booking page."""
+    if not require_role("Patient"):
         return
 
     st.title("📅 Book Appointment")
@@ -714,6 +926,7 @@ def render_patient_book(all_appointments, doctors, patient_name, patient_email):
 
 
 def _render_book_tab(all_appointments, doctors, patient_name, patient_email):
+    """Render booking tab."""
     col1, col2 = st.columns([3, 3])
 
     with col1:
@@ -728,7 +941,7 @@ def _render_book_tab(all_appointments, doctors, patient_name, patient_email):
                 format_func=lambda did: doc_id_to_label.get(did, "Unknown"),
                 key="form_doctor_id_selector",
             )
-            form_doctor = get_doctor_by_id(doctors, selected_doc_id)
+            form_doctor = AppointmentService.get_doctor_by_id(doctors, selected_doc_id)
         else:
             st.warning("No doctors are registered yet.")
             form_doctor = None
@@ -757,32 +970,30 @@ def _render_book_tab(all_appointments, doctors, patient_name, patient_email):
                 st.info("⏰ No available slots for this doctor. Please ask your doctor to add time slots or check back later.")
             slot = None
 
-        btn_col, cap_col = st.columns([1, 2])
-        with btn_col:
-            clicked = st.button("Book Appointment", key="form_book_btn", type="primary", use_container_width=True)
-        with cap_col:
-            st.caption("Fields marked * are required. Status defaults to **Scheduled**.")
+        st.divider()
+        st.caption("Fields marked * are required. Status defaults to **Scheduled**.")
+        clicked = st.button("📅  Book Appointment", key="form_book_btn", type="primary", use_container_width=True)
 
         if clicked:
-            errors = validate_booking(form_doctor, appt_type, symptoms, slot)
+            errors = Validators.validate_booking(form_doctor, appt_type, symptoms, slot)
             if errors:
-                show_validation_errors(errors)
+                UIHelpers.show_validation_errors(errors)
             else:
                 with st.spinner("Booking your appointment..."):
-                    new_appt = build_appointment(patient_name, patient_email,
+                    fresh_appts = DataStore.reload_json(PATH_APPOINTMENTS, [])
+                    fresh_docs = DataStore.reload_json(PATH_DOCTORS, [])
+
+                    new_appt = AppointmentService.build_appointment(patient_name, patient_email,
                                                  form_doctor, slot, appt_type, symptoms.strip())
-                    all_appointments.append(new_appt)
-                    remove_slot_from_doctor(doctors, form_doctor.get("doctor_id", ""), slot)
-                    success, msg = transactional_save(
-                        (PATH_APPOINTMENTS, all_appointments), (PATH_DOCTORS, doctors)
+                    fresh_appts.append(new_appt)
+                    AppointmentService.remove_slot_from_doctor(fresh_docs, form_doctor.get("doctor_id", ""), slot)
+                    success, msg = DataStore.transactional_save(
+                        (PATH_APPOINTMENTS, fresh_appts), (PATH_DOCTORS, fresh_docs)
                     )
                     if success:
                         st.balloons()
                         navigate_to("patient_dashboard")
                     else:
-                        # Rollback in-memory changes
-                        all_appointments.pop()
-                        add_slot_to_doctor(doctors, form_doctor.get("doctor_id", ""), slot)
                         st.error(f"⚠️  Booking failed: {msg}")
 
     with col2:
@@ -790,6 +1001,7 @@ def _render_book_tab(all_appointments, doctors, patient_name, patient_email):
 
 
 def _render_ai_assistant(all_appointments, doctors, patient_email):
+    """Render AI assistant chat."""
     st.subheader("🤖 AI Assistant")
     hdr_col, btn_col = st.columns([3, 1])
     with hdr_col:
@@ -815,8 +1027,9 @@ def _render_ai_assistant(all_appointments, doctors, patient_email):
 
 
 def _render_reschedule_tab(all_appointments, doctors, patient_email):
+    """Render reschedule tab."""
     st.markdown("### 🔄 Reschedule an Appointment")
-    scheduled = get_scheduled_appointments(all_appointments, patient_email)
+    scheduled = AppointmentService.get_scheduled_appointments(all_appointments, patient_email)
 
     if not scheduled:
         st.info("You have no scheduled appointments to reschedule.")
@@ -828,8 +1041,8 @@ def _render_reschedule_tab(all_appointments, doctors, patient_email):
         for a in scheduled
     }
     rs_label = st.selectbox("Select appointment to reschedule", options=list(rs_options.keys()), key="reschedule_appt_selector")
-    rs_appt  = get_appointment_by_id(all_appointments, rs_options[rs_label])
-    rs_doc   = get_doctor_by_id(doctors, rs_appt.get("doctor_id", "")) if rs_appt else None
+    rs_appt  = AppointmentService.get_appointment_by_id(all_appointments, rs_options[rs_label])
+    rs_doc   = AppointmentService.get_doctor_by_id(doctors, rs_appt.get("doctor_id", "")) if rs_appt else None
     new_slots = list(rs_doc.get("available_slots", [])) if rs_doc else []
 
     if not new_slots:
@@ -841,37 +1054,38 @@ def _render_reschedule_tab(all_appointments, doctors, patient_email):
 
     if st.button("Confirm Reschedule", key="reschedule_btn", type="primary", use_container_width=True):
         with st.spinner("Rescheduling..."):
-            old_slot = rs_appt.get("appointment_date", "") + "T" + rs_appt.get("appointment_time", "")
+            fresh_appts = DataStore.reload_json(PATH_APPOINTMENTS, [])
+            fresh_docs = DataStore.reload_json(PATH_DOCTORS, [])
+
+            fresh_rs_appt = AppointmentService.get_appointment_by_id(fresh_appts, rs_appt.get("appointment_id", ""))
+            fresh_rs_doc = AppointmentService.get_doctor_by_id(fresh_docs, rs_appt.get("doctor_id", ""))
+
+            old_slot = fresh_rs_appt.get("appointment_date", "") + "T" + fresh_rs_appt.get("appointment_time", "")
             slot_date, slot_time = new_slot.split("T")
-            reschedule_appointment(all_appointments, rs_appt.get("appointment_id", ""), slot_date, slot_time)
-            if rs_doc:
-                remove_slot_from_doctor(doctors, rs_doc.get("doctor_id", ""), new_slot)
-                add_slot_to_doctor(doctors, rs_doc.get("doctor_id", ""), old_slot)
-            success, msg = transactional_save(
-                (PATH_APPOINTMENTS, all_appointments), (PATH_DOCTORS, doctors)
+            AppointmentService.reschedule_appointment(fresh_appts, fresh_rs_appt.get("appointment_id", ""), slot_date, slot_time)
+            if fresh_rs_doc:
+                AppointmentService.remove_slot_from_doctor(fresh_docs, fresh_rs_doc.get("doctor_id", ""), new_slot)
+                AppointmentService.add_slot_to_doctor(fresh_docs, fresh_rs_doc.get("doctor_id", ""), old_slot)
+            success, msg = DataStore.transactional_save(
+                (PATH_APPOINTMENTS, fresh_appts), (PATH_DOCTORS, fresh_docs)
             )
             if success:
                 st.success(f"Appointment rescheduled to {format_appointment_date(slot_date)} at {slot_time}.")
                 st.rerun()
             else:
-                # Rollback in-memory changes
-                reschedule_appointment(all_appointments, rs_appt.get("appointment_id", ""),
-                                       rs_appt.get("appointment_date", ""), rs_appt.get("appointment_time", ""))
-                if rs_doc:
-                    add_slot_to_doctor(doctors, rs_doc.get("doctor_id", ""), new_slot)
-                    remove_slot_from_doctor(doctors, rs_doc.get("doctor_id", ""), old_slot)
                 st.error(f"⚠️  Reschedule failed: {msg}")
 
 
 def _render_cancel_tab(all_appointments, doctors, patient_email):
+    """Render cancel tab."""
     st.markdown("### ❌ Cancel an Appointment")
-    scheduled = get_scheduled_appointments(all_appointments, patient_email)
+    scheduled = AppointmentService.get_scheduled_appointments(all_appointments, patient_email)
 
     if not scheduled:
         st.info("You have no scheduled appointments to cancel.")
         return
 
-    render_appt_table(scheduled)
+    UIHelpers.render_styled_table(scheduled)
     cl_options = {
         f"{a.get('doctor_name', 'Unknown')} — {format_appointment_date(a.get('appointment_date', ''))} "
         f"{a.get('appointment_time', '')} ({a.get('appointment_type', 'N/A')})": a.get("appointment_id", "")
@@ -881,36 +1095,32 @@ def _render_cancel_tab(all_appointments, doctors, patient_email):
 
     if st.button("Cancel Appointment", key="cancel_btn", type="primary", use_container_width=True):
         with st.spinner("Cancelling appointment..."):
+            fresh_appts = DataStore.reload_json(PATH_APPOINTMENTS, [])
+            fresh_docs = DataStore.reload_json(PATH_DOCTORS, [])
+
             appt_id = cl_options[cl_label]
-            appt = get_appointment_by_id(all_appointments, appt_id)
-            # Restore the slot to the doctor when cancelling
+            appt = AppointmentService.get_appointment_by_id(fresh_appts, appt_id)
             if appt:
                 old_slot = appt.get("appointment_date", "") + "T" + appt.get("appointment_time", "")
-                add_slot_to_doctor(doctors, appt.get("doctor_id", ""), old_slot)
-            cancel_appointment(all_appointments, appt_id)
-            success, msg = transactional_save(
-                (PATH_APPOINTMENTS, all_appointments), (PATH_DOCTORS, doctors)
+                AppointmentService.add_slot_to_doctor(fresh_docs, appt.get("doctor_id", ""), old_slot)
+            AppointmentService.cancel_appointment(fresh_appts, appt_id)
+            success, msg = DataStore.transactional_save(
+                (PATH_APPOINTMENTS, fresh_appts), (PATH_DOCTORS, fresh_docs)
             )
             if success:
                 st.success("Appointment cancelled successfully. The time slot has been freed.")
                 st.rerun()
             else:
-                # Rollback in-memory
-                if appt:
-                    appt["status"] = "Scheduled"
-                    remove_slot_from_doctor(doctors, appt.get("doctor_id", ""), old_slot)
                 st.error(f"⚠️  Could not save cancellation: {msg}")
 
 
 # ── Doctor dashboard ───────────────────────────────────────────────────────────
 def render_doctor_dashboard(all_appointments, doctor_id, doctor_name):
-    # Role guard — redirect without double rerun
-    if st.session_state.get("role") != "Doctor":
-        reset_session()
-        navigate_to("login")
+    """Render doctor dashboard."""
+    if not require_role("Doctor"):
         return
 
-    my_schedule = get_doctor_appointments(all_appointments, doctor_id)
+    my_schedule = AppointmentService.get_doctor_appointments(all_appointments, doctor_id)
 
     st.title("📊 Appointment Dashboard")
     st.caption(f"Patient roster for {doctor_name}")
@@ -919,7 +1129,7 @@ def render_doctor_dashboard(all_appointments, doctor_id, doctor_name):
     col1, col2 = st.columns([4, 2])
     with col1:
         if my_schedule:
-            render_appt_table(my_schedule)
+            UIHelpers.render_styled_table(my_schedule)
         else:
             st.info("No appointments assigned to you yet.")
     with col2:
@@ -931,13 +1141,15 @@ def render_doctor_dashboard(all_appointments, doctor_id, doctor_name):
     if my_schedule:
         st.divider()
         st.markdown('<div class="section-header">✏️ Update Appointment Status</div>', unsafe_allow_html=True)
-        appt_selectbox("Choose an appointment to update:", my_schedule, key="doctor_appt_selector")
-        appt = get_appointment_by_id(all_appointments, st.session_state.get("selected_appointment_id"))
+        UIHelpers.appt_selectbox("Choose an appointment to update:", my_schedule,
+                       key="doctor_appt_selector", state_key="doctor_selected_appt_id")
+        appt = AppointmentService.get_appointment_by_id(all_appointments, st.session_state.get("doctor_selected_appt_id"))
         if appt:
             _render_appt_update_form(all_appointments, appt)
 
 
 def _render_appt_update_form(all_appointments, appt):
+    """Render appointment update form."""
     with st.container(border=True):
         col_a, col_b = st.columns(2)
         with col_a:
@@ -967,23 +1179,24 @@ def _render_appt_update_form(all_appointments, appt):
             st.write("")
             if st.button("Save Changes", key=f"doctor_save_btn_{appt.get('appointment_id', '')}", type="primary", use_container_width=True):
                 with st.spinner("Saving..."):
-                    update_appointment_status(all_appointments, appt.get("appointment_id", ""), new_status, new_note)
-                    if save_json(PATH_APPOINTMENTS, all_appointments):
-                        st.success("Appointment updated successfully.")
-                        st.rerun()
-                    else:
-                        st.error("⚠️  Could not save changes. Please try again.")
+                    fresh_appts = DataStore.reload_json(PATH_APPOINTMENTS, [])
+                    fresh_appt = AppointmentService.get_appointment_by_id(fresh_appts, appt.get("appointment_id", ""))
+                    if fresh_appt:
+                        AppointmentService.update_appointment_status(fresh_appts, appt.get("appointment_id", ""), new_status, new_note)
+                        if DataStore.save_json(PATH_APPOINTMENTS, fresh_appts):
+                            st.success("Appointment updated successfully.")
+                            st.rerun()
+                        else:
+                            st.error("⚠️  Could not save changes. Please try again.")
 
 
 # ── Doctor slots page ──────────────────────────────────────────────────────────
 def render_doctor_slots(doctors, doctor_id, doctor_name):
-    # Role guard — redirect without double rerun
-    if st.session_state.get("role") != "Doctor":
-        reset_session()
-        navigate_to("login")
+    """Render doctor time slots management page."""
+    if not require_role("Doctor"):
         return
 
-    current_doctor = get_doctor_by_id(doctors, doctor_id)
+    current_doctor = AppointmentService.get_doctor_by_id(doctors, doctor_id)
 
     st.title("⏰ Manage Time Slots")
     st.caption(f"Managing slots for {doctor_name}")
@@ -1002,8 +1215,9 @@ def render_doctor_slots(doctors, doctor_id, doctor_name):
                 if current_doctor and new_slot in current_doctor.get("available_slots", []):
                     st.warning("This slot already exists.")
                 else:
-                    add_slot_to_doctor(doctors, doctor_id, new_slot)
-                    if save_json(PATH_DOCTORS, doctors):
+                    fresh_docs = DataStore.reload_json(PATH_DOCTORS, [])
+                    AppointmentService.add_slot_to_doctor(fresh_docs, doctor_id, new_slot)
+                    if DataStore.save_json(PATH_DOCTORS, fresh_docs):
                         st.success(f"Slot added: {format_appointment_date(str(slot_date))} at {slot_hour}")
                         st.rerun()
                     else:
@@ -1037,8 +1251,9 @@ def render_doctor_slots(doctors, doctor_id, doctor_name):
                 )
                 if st.button("Remove Slot", key="remove_slot_btn", type="primary", use_container_width=True):
                     with st.spinner("Removing slot..."):
-                        remove_slot_from_doctor(doctors, doctor_id, slot_to_remove)
-                        if save_json(PATH_DOCTORS, doctors):
+                        fresh_docs = DataStore.reload_json(PATH_DOCTORS, [])
+                        AppointmentService.remove_slot_from_doctor(fresh_docs, doctor_id, slot_to_remove)
+                        if DataStore.save_json(PATH_DOCTORS, fresh_docs):
                             parts = slot_to_remove.split("T")
                             slot_date_str = format_appointment_date(parts[0]) if len(parts) > 0 else "N/A"
                             slot_time_str = parts[1] if len(parts) > 1 else "N/A"
@@ -1057,9 +1272,11 @@ _SESSION_DEFAULTS = {
     "current_user_email":      None,
     "current_doctor_id":       None,
     "page":                    "login",
-    "selected_appointment_id": None,
+    "patient_selected_appt_id": None,
+    "doctor_selected_appt_id":  None,
     "messages":                [{"role": "assistant", "content": "Hi! I am the ClearVision Clinic assistant. How can I help you today?"}],
-    "_reg_success":            None,
+    "_flash_message":          None,
+    "_flash_type":             None,
 }
 for _key, _val in _SESSION_DEFAULTS.items():
     if _key not in st.session_state:
@@ -1068,9 +1285,9 @@ for _key, _val in _SESSION_DEFAULTS.items():
 # Inject custom CSS
 inject_custom_css()
 
-all_patients     = load_json(PATH_PATIENTS, [])
-doctors          = load_json(PATH_DOCTORS, [])
-all_appointments = load_json(PATH_APPOINTMENTS, [])
+all_patients     = DataStore.load_json(PATH_PATIENTS, [])
+doctors          = DataStore.load_json(PATH_DOCTORS, [])
+all_appointments = DataStore.load_json(PATH_APPOINTMENTS, [])
 
 # ─── MAIN ──────────────────────────────────────────────────────────────────────
 if st.session_state.get("logged_in"):
