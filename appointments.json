@@ -43,5 +43,20 @@
     "symptom_summary": "Annual checkup, no specific complaints",
     "status": "Completed",
     "doctor_note": "Passed all standard vision tests. Follow up in 12 months."
+  },
+  {
+    "appointment_id": "appt-a958524c",
+    "clinic_id": "ClearVision-01",
+    "patient_name": "Yimeng Dong",
+    "patient_email": "dongyi@udel.edu",
+    "doctor_id": "doc_01",
+    "doctor_name": "Dr. Sarah Chen",
+    "appointment_date": "2026-05-01",
+    "appointment_time": "09:00",
+    "submitted_timestamp": "2026-04-05T22:19:58.449258",
+    "appointment_type": "Routine Vision Check",
+    "symptom_summary": "eye exam, can't open my eyes in the morning",
+    "status": "Scheduled",
+    "doctor_note": ""
   }
 ]

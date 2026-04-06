@@ -335,7 +335,7 @@ def render_login(all_patients, doctors):
 
         # ── Patient tab ──
         with tab_p:
-            mode = st.radio("", ["Login", "Register"], key="patient_mode", horizontal=True)
+            mode = st.radio("Mode", ["Login", "Register"], key="patient_mode", horizontal=True, label_visibility="collapsed")
             st.divider()
             if mode == "Login":
                 st.subheader("Patient Login")
@@ -383,7 +383,7 @@ def render_login(all_patients, doctors):
 
         # ── Doctor tab ──
         with tab_d:
-            mode = st.radio("", ["Login", "Register"], key="doctor_mode", horizontal=True)
+            mode = st.radio("Mode", ["Login", "Register"], key="doctor_mode", horizontal=True, label_visibility="collapsed")
             st.divider()
             if mode == "Login":
                 st.subheader("Doctor Login")
@@ -448,7 +448,10 @@ def render_patient_dashboard(all_appointments, patient_email, patient_name):
 
     col1, col2 = st.columns([4, 2])
     with col1:
-        appt_cards(appts) if appts else st.info("🗓️ No appointments yet. Use **Book Appointment** to get started.")
+        if appts:
+            appt_cards(appts)
+        else:
+            st.info("🗓️ No appointments yet. Use **Book Appointment** to get started.")
     with col2:
         st.metric("Total",     len(appts))
         st.metric("Scheduled", sum(1 for a in appts if a.get("status") == "Scheduled"))
@@ -653,7 +656,10 @@ def render_doctor_dashboard(all_appointments, doctor_id, doctor_name):
 
     col1, col2 = st.columns([4, 2])
     with col1:
-        appt_cards(schedule) if schedule else st.info("No appointments assigned to you yet.")
+        if schedule:
+            appt_cards(schedule)
+        else:
+            st.info("No appointments assigned to you yet.")
     with col2:
         st.metric("My Appointments", len(schedule))
         st.metric("Scheduled", sum(1 for a in schedule if a.get("status") == "Scheduled"))

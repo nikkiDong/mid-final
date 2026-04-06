@@ -4,7 +4,6 @@
     "name": "Dr. Sarah Chen",
     "specialty": "Retinal Disease",
     "available_slots": [
-      "2026-05-01T09:00",
       "2026-05-01T10:30"
     ]
   },
@@ -33,7 +32,8 @@
     "specialty": "Vision",
     "password": "eaa30ee598bfc56244c128b75aab299cec131472967cfeb6fffc64edc5c60beb",
     "available_slots": [
-      "2026-04-03T08:00"
+      "2026-04-03T08:00",
+      "2026-04-05T08:00"
     ]
   }
 ]
