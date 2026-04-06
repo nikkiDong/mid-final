@@ -9,6 +9,7 @@ import streamlit as st
 
 st.set_page_config("ClearVision Clinic", layout="wide", initial_sidebar_state="expanded")
 
+# ── Constants ─────────────────────────────────────────────────────────────────
 CLINIC_ID = "ClearVision-01"
 APPOINTMENT_TYPES = ["Routine Vision Check", "Glaucoma Screening", "Fundus Exam",
                      "Cataract Evaluation", "Retinal Exam"]
@@ -28,6 +29,7 @@ for _k, _v in _SESSION_DEFAULTS.items():
     if _k not in st.session_state:
         st.session_state[_k] = _v
 
+# ── CSS ───────────────────────────────────────────────────────────────────────
 st.markdown("""<style>
 .section-header { font-size:1.4rem; font-weight:600; color:#1f77b4; border-bottom:3px solid #1f77b4; padding-bottom:.5rem; margin-bottom:1.5rem; }
 .status-scheduled { background:#d4edda; color:#155724; padding:.25rem .55rem; border-radius:.25rem; font-weight:600; font-size:.82rem; }
@@ -45,6 +47,7 @@ st.markdown("""<style>
 .stTabs [data-baseweb="tab-panel"] { padding-top:1rem; }
 </style>""", unsafe_allow_html=True)
 
+# ── Persistence ───────────────────────────────────────────────────────────────
 def load_json(path, default):
     if path.exists():
         try:
@@ -97,6 +100,7 @@ def transactional_save(*pairs) -> tuple[bool, str]:
             path.with_suffix(".tmp").unlink(missing_ok=True)
         return False, f"Save failed: {e}. All changes rolled back."
 
+# ── Utils ─────────────────────────────────────────────────────────────────────
 def hash_pw(pw: str) -> str:
     return hashlib.sha256(pw.encode()).hexdigest()
 
